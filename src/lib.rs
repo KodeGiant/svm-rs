@@ -2,6 +2,8 @@ use once_cell::sync::Lazy;
 use semver::{Version, VersionReq};
 use sha2::Digest;
 
+use std::env;
+use std::time::Duration;
 use std::{
     ffi::OsString,
     fs,
@@ -9,8 +11,6 @@ use std::{
     path::PathBuf,
     process::Command,
 };
-
-use std::time::Duration;
 /// Use permissions extensions on unix
 #[cfg(target_family = "unix")]
 use std::{fs::Permissions, os::unix::fs::PermissionsExt};
@@ -46,6 +46,33 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Version beyond which solc binaries are not fully static, hence need to be patched for NixOS.
 static NIXOS_PATCH_REQ: Lazy<VersionReq> = Lazy::new(|| VersionReq::parse(">=0.7.6").unwrap());
+
+static ALLOW_INVALID_CERTS: Lazy<bool> = Lazy::new(|| {
+    let invalid_certs = env::var("SVM_INVALID_CERTS").unwrap_or("false".to_owned());
+    invalid_certs.parse().unwrap_or(false)
+});
+
+pub async fn async_get<T: reqwest::IntoUrl>(url: T) -> reqwest::Result<reqwest::Response> {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .danger_accept_invalid_certs(ALLOW_INVALID_CERTS.to_owned())
+        .build()
+        .expect("reqwest::Client::new()")
+        .get(url)
+        .send()
+        .await
+}
+
+#[cfg(feature = "blocking")]
+pub fn blocking_get<T: reqwest::IntoUrl>(url: T) -> reqwest::Result<reqwest::blocking::Response> {
+    reqwest::blocking::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .danger_accept_invalid_certs(ALLOW_INVALID_CERTS.to_owned())
+        .build()
+        .expect("reqwest::Client::new()")
+        .get(url)
+        .send()
+}
 
 // Installer type that copies binary data to the appropriate solc binary file:
 // 1. create target file to copy binary data
@@ -207,12 +234,7 @@ pub fn blocking_install(version: &Version) -> Result<PathBuf, SolcVmError> {
         .get_checksum(version)
         .unwrap_or_else(|| panic!("checksum not available: {:?}", version.to_string()));
 
-    let res = reqwest::blocking::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .expect("reqwest::Client::new()")
-        .get(download_url.clone())
-        .send()?;
+    let res = blocking_get(download_url.clone())?;
 
     if !res.status().is_success() {
         return Err(SolcVmError::UnsuccessfulResponse(
@@ -255,13 +277,7 @@ pub async fn install(version: &Version) -> Result<PathBuf, SolcVmError> {
         .get_checksum(version)
         .unwrap_or_else(|| panic!("checksum not available: {:?}", version.to_string()));
 
-    let res = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .expect("reqwest::Client::new()")
-        .get(download_url.clone())
-        .send()
-        .await?;
+    let res = async_get(download_url.clone()).await?;
 
     if !res.status().is_success() {
         return Err(SolcVmError::UnsuccessfulResponse(
@@ -508,7 +524,7 @@ mod tests {
 
         let checksum = artifacts.get_checksum(&latest).unwrap();
 
-        let resp = reqwest::get(download_url).await.unwrap();
+        let resp = async_get(download_url).await.unwrap();
         assert!(resp.status().is_success());
         let binbytes = resp.bytes().await.unwrap();
         ensure_checksum(&binbytes, &latest, checksum).unwrap();

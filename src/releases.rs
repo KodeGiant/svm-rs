@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use reqwest::get;
 use semver::Version;
 use serde::{
     de::{self, Deserializer},
@@ -8,7 +7,7 @@ use serde::{
 use std::collections::BTreeMap;
 use url::Url;
 
-use crate::{error::SolcVmError, platform::Platform};
+use crate::{async_get, error::SolcVmError, platform::Platform};
 
 const SOLC_RELEASES_URL: &str = "https://binaries.soliditylang.org";
 
@@ -121,8 +120,10 @@ mod hex_string {
 /// Blocking version fo [`all_realeases`]
 #[cfg(feature = "blocking")]
 pub fn blocking_all_releases(platform: Platform) -> Result<Releases, SolcVmError> {
+    use crate::blocking_get;
+
     if platform == Platform::LinuxAarch64 {
-        return Ok(reqwest::blocking::get(LINUX_AARCH64_RELEASES_URL)?.json::<Releases>()?);
+        return Ok(blocking_get(LINUX_AARCH64_RELEASES_URL)?.json::<Releases>()?);
     }
 
     if platform == Platform::MacOsAarch64 {
@@ -133,8 +134,8 @@ pub fn blocking_all_releases(platform: Platform) -> Result<Releases, SolcVmError
         //
         // 2. For version <= 0.8.4 we fetch releases from https://binaries.soliditylang.org and
         // require Rosetta support.
-        let mut native = reqwest::blocking::get(MACOS_AARCH64_RELEASES_URL)?.json::<Releases>()?;
-        let mut releases = reqwest::blocking::get(format!(
+        let mut native = blocking_get(MACOS_AARCH64_RELEASES_URL)?.json::<Releases>()?;
+        let mut releases = blocking_get(format!(
             "{}/{}/list.json",
             SOLC_RELEASES_URL,
             Platform::MacOsAmd64,
@@ -148,15 +149,15 @@ pub fn blocking_all_releases(platform: Platform) -> Result<Releases, SolcVmError
         return Ok(releases);
     }
 
-    let releases = reqwest::blocking::get(format!("{SOLC_RELEASES_URL}/{platform}/list.json"))?
-        .json::<Releases>()?;
+    let releases =
+        blocking_get(format!("{SOLC_RELEASES_URL}/{platform}/list.json"))?.json::<Releases>()?;
     Ok(unified_releases(releases, platform))
 }
 
 /// Fetch all releases available for the provided platform.
 pub async fn all_releases(platform: Platform) -> Result<Releases, SolcVmError> {
     if platform == Platform::LinuxAarch64 {
-        return Ok(get(LINUX_AARCH64_RELEASES_URL)
+        return Ok(async_get(LINUX_AARCH64_RELEASES_URL)
             .await?
             .json::<Releases>()
             .await?);
@@ -170,11 +171,11 @@ pub async fn all_releases(platform: Platform) -> Result<Releases, SolcVmError> {
         //
         // 2. For version <= 0.8.4 we fetch releases from https://binaries.soliditylang.org and
         // require Rosetta support.
-        let mut native = get(MACOS_AARCH64_RELEASES_URL)
+        let mut native = async_get(MACOS_AARCH64_RELEASES_URL)
             .await?
             .json::<Releases>()
             .await?;
-        let mut releases = get(format!(
+        let mut releases = async_get(format!(
             "{}/{}/list.json",
             SOLC_RELEASES_URL,
             Platform::MacOsAmd64,
@@ -192,7 +193,7 @@ pub async fn all_releases(platform: Platform) -> Result<Releases, SolcVmError> {
         return Ok(releases);
     }
 
-    let releases = get(format!("{SOLC_RELEASES_URL}/{platform}/list.json"))
+    let releases = async_get(format!("{SOLC_RELEASES_URL}/{platform}/list.json"))
         .await?
         .json::<Releases>()
         .await?;
